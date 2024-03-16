@@ -1,12 +1,12 @@
 /*
  * This is a Linux porting of the original VulnServer created by Stephen
  * Bradshaw - a deliberately vulnerable threaded TCP server application.
- * 
+ *
  * As declared in the original version, this is vulnerable software, don't run
  * it on an important system!  The authors assume no responsibility if you run
  * this software and your system gets compromised, because this software was
  * designed to be exploited!
- * 
+ *
  * For more details, visit Stephen's blog at http://www.thegreycorner.com
  *
  * Copyright (c) 2010, Stephen Bradshaw
@@ -17,7 +17,7 @@
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * Redistributions of source code must retain the above copyright notice,
  * this list of conditions and the following disclaimer.  Redistributions in
  * binary form must reproduce the above copyright notice, this list of
@@ -50,27 +50,66 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define BACKLOG		5
-#define BUFFER_LENGTH	4096
-#define PORT_NUMBER	"9999"
-#define VERSION		"1.00"
+#define BACKLOG			5
+#define DEFAULT_BUFLEN		4096
+#define DEFAULT_PORT_NUMBER	"9999"
+#define VERSION			"1.00"
 
-static void function1(char *input);
-static void function2(char *input);
-static void function3(char *input);
-static void function4(char *input);
-static void *connection_handler(void *arg);
+#define NOT_IMPLEMENTED		\
+	"Command specific help has not been implemented\n"
 
-static void usage(char *argv[])
+#define VALID_COMMANDS		\
+	"Valid Commands:\n"	\
+	"HELP\n"		\
+	"STATS [stat_value]\n"	\
+	"RTIME [rtime_value]\n"	\
+	"LTIME [ltime_value]\n"	\
+	"SRUN [srun_value]\n"	\
+	"TRUN [trun_value]\n"	\
+	"GMON [gmon_value]\n"	\
+	"GDOG [gdog_value]\n"	\
+	"KSTET [kstet_value]\n"	\
+	"GTER [gter_value]\n"	\
+	"HTER [hter_value]\n"	\
+	"LTER [lter_value]\n"	\
+	"KSTAN [lstan_value]\n"	\
+	"EXIT\n"
+
+void *connection_handler(void *arg);
+int handle_command(int client_fd, char *cmdbuf, char *gdogbuf);
+int handle_not_implemented(int client_fd);
+int handle_help(int client_fd);
+int handle_stats(int client_fd, char *cmdbuf);
+int handle_rtime(int client_fd, char *cmdbuf);
+int handle_ltime(int client_fd, char *cmdbuf);
+int handle_srun(int client_fd, char *cmdbuf);
+int handle_trun(int client_fd, char *cmdbuf);
+int handle_gmon(int client_fd, char *cmdbuf);
+int handle_gdog(int client_fd, char *cmdbuf, char *gdogbuf);
+int handle_kstet(int client_fd, char *cmdbuf);
+int handle_gter(int client_fd, char *cmdbuf, char *gdogbuf);
+int handle_hter(int client_fd, char *cmdbuf);
+int handle_lter(int client_fd, char *cmdbuf);
+int handle_kstan(int client_fd);
+int handle_exit(int client_fd);
+int handle_unknown(int client_fd);
+void function1(char *input);
+void function2(char *input);
+void function3(char *input);
+void function4(char *input);
+
+void usage(char *argv[])
 {
 	fprintf(stderr, "Usage: %s [port_number]\n\n"
 		"If no port number is provided, "
 		"the default port of %s will be used.\n",
-		argv[0], PORT_NUMBER);
+		argv[0], DEFAULT_PORT_NUMBER);
 }
-static bool is_valid_port_number(char *argv)
+
+bool is_valid_port_number(char *argv)
 {
 	int port_number = atoi(argv);
+
 	return port_number > 0 && port_number < 65536;
 }
 
@@ -83,7 +122,7 @@ int main(int argc, char *argv[])
 	int err;
 
 	if (argc == 1) {
-		strncpy(port_number, PORT_NUMBER, 6);
+		strncpy(port_number, DEFAULT_PORT_NUMBER, 6);
 	} else if (argc == 2) {
 		if (is_valid_port_number(argv[1])) {
 			strncpy(port_number, argv[1], 6);
@@ -118,15 +157,16 @@ int main(int argc, char *argv[])
 
 	for (ai = addrinfo; ai != NULL; ai = ai->ai_next) {
 		const int optval = 1;
+
 		server_fd = socket(ai->ai_family, ai->ai_socktype,
-					ai->ai_protocol);
+				   ai->ai_protocol);
 		if (server_fd == -1) {
 			fprintf(stderr, "Could not create socket\n");
 			continue;
 		}
 
 		err = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval,
-					sizeof(optval));
+				 sizeof(optval));
 		if (err != 0) {
 			fprintf(stderr, "Could not set socket options\n");
 			close(server_fd);
@@ -171,20 +211,23 @@ int main(int argc, char *argv[])
 		printf("Waiting for client connections...\n");
 
 		client_fd = accept(server_fd, (struct sockaddr *)&client_addr,
-					&addrlen);
+				   &addrlen);
 
 		if (client_fd == -1) {
 			fprintf(stderr, "Could not accept connection\n");
 			continue;
 		}
 
-		if (getnameinfo((struct sockaddr *)&client_addr, addrlen,
-			host, NI_MAXHOST, NULL, 0, 0) == 0) {
-			printf("Received a client connection from %s\n", host);
-		}
-	
+		err = getnameinfo((struct sockaddr *)&client_addr, addrlen,
+				   host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+		if (err != 0)
+			fprintf(stderr, "Could not get client host address\n");
+		else
+			printf("Received a client connection from host %s\n",
+				host);
+
 		err = pthread_create(&thread, NULL, connection_handler,
-			(void *)&client_fd);
+				     (void *)&client_fd);
 		if (err != 0) {
 			fprintf(stderr, "Could not create thread\n");
 			continue;
@@ -200,188 +243,303 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
-static void function1(char *input)
-{
-	char buffer[140];
-	strcpy(buffer, input);
-}
-
-static void function2(char *input)
-{
-	char buffer[60];
-	strcpy(buffer, input);
-}
-
-static void function3(char *input)
-{
-	char buffer[2000];
-	strcpy(buffer, input);
-}
-
-static void function4(char *input)
-{
-	char buffer[1000];
-	strcpy(buffer, input);
-}
-
-static void *connection_handler(void *arg)
+void *connection_handler(void *arg)
 {
 	int client_fd = *(int *)arg;
-	// char *recvbuf = malloc(DEFAULT_BUFFER_LENGTH);
-	// char bigempty[1000];
-	// char *gdogbuf = malloc(1024);
-	// int Result, SendResult, i, k;
-	//memset(bigempty, 0, 1000);
-	// memset(recvbuf, 0, DEFAULT_BUFFER_LENGTH);
-	char buffer[BUFFER_LENGTH];
-	int err;
+	char *cmdbuf = malloc(DEFAULT_BUFLEN);
+	char bigempty[1000];
+	char *gdogbuf = malloc(1024);
 	int count;
 
+	memset(bigempty, 0, 1000);
+	memset(cmdbuf, 0, DEFAULT_BUFLEN);
+
 	count = send(client_fd, "Welcome to Vulnerable Server!\n"
-				"Enter HELP for help.\n", 52, 0 );
+				"Enter HELP for help.\n", 52, 0);
 	if (count == -1) {
-		printf("Send failed with error (%d): %s\n", errno,
+		fprintf(stderr, "Send failed with error (%d): %s\n", errno,
 			strerror(errno));
-		close(client_fd);
-		pthread_exit(NULL);
+		goto out_close;
 	}
 
-#if 0
 	for (;;) {
-		count = recv(client_fd, buffer, BUFFER_LENGTH, 0);
+		count = recv(client_fd, cmdbuf, DEFAULT_BUFLEN, 0);
 		if (count > 0) {
-			if (strncmp(buffer, "HELP ", 5) == 0) {
-				const char NotImplemented[47] = "Command specific help has not been implemented\n";
-				SendResult = send( Client, NotImplemented, sizeof(NotImplemented), 0 );
-			} else if (strncmp(RecvBuf, "HELP", 4) == 0) {
-				const char ValidCommands[251] = "Valid Commands:\nHELP\nSTATS [stat_value]\nRTIME [rtime_value]\nLTIME [ltime_value]\nSRUN [srun_value]\nTRUN [trun_value]\nGMON [gmon_value]\nGDOG [gdog_value]\nKSTET [kstet_value]\nGTER [gter_value]\nHTER [hter_value]\nLTER [lter_value]\nKSTAN [lstan_value]\nEXIT\n";
-				SendResult = send( Client, ValidCommands, sizeof(ValidCommands), 0 );
-			} else if (strncmp(RecvBuf, "STATS ", 6) == 0) {
-				char *StatBuf = malloc(120);
-				memset(StatBuf, 0, 120);
-				strncpy(StatBuf, RecvBuf, 120);
-				SendResult = send( Client, "STATS VALUE NORMAL\n", 19, 0 );
-			} else if (strncmp(RecvBuf, "RTIME ", 6) == 0) {
-				char *RtimeBuf = malloc(120);
-				memset(RtimeBuf, 0, 120);
-				strncpy(RtimeBuf, RecvBuf, 120);
-				SendResult = send( Client, "RTIME VALUE WITHIN LIMITS\n", 26, 0 );
-			} else if (strncmp(RecvBuf, "LTIME ", 6) == 0) {
-				char *LtimeBuf = malloc(120);
-				memset(LtimeBuf, 0, 120);
-				strncpy(LtimeBuf, RecvBuf, 120);
-				SendResult = send( Client, "LTIME VALUE HIGH, BUT OK\n", 25, 0 );
-			} else if (strncmp(RecvBuf, "SRUN ", 5) == 0) {
-				char *SrunBuf = malloc(120);
-				memset(SrunBuf, 0, 120);
-				strncpy(SrunBuf, RecvBuf, 120);
-				SendResult = send( Client, "SRUN COMPLETE\n", 14, 0 );
-			} else if (strncmp(RecvBuf, "TRUN ", 5) == 0) {
-				char *TrunBuf = malloc(3000);
-				memset(TrunBuf, 0, 3000);
-				for (i = 5; i < RecvBufLen; i++) {
-					if ((char)RecvBuf[i] == '.') {
-						strncpy(TrunBuf, RecvBuf, 3000);				
-						Function3(TrunBuf);
-						break;
-					}
+			int ret = handle_command(client_fd, cmdbuf, gdogbuf);
+			if (ret == -1) {
+				if (errno != 0) {
+					fprintf(stderr, "Command %s failed with error (%d): %s\n",
+						cmdbuf, errno, strerror(errno));
 				}
-				memset(TrunBuf, 0, 3000);				
-				SendResult = send( Client, "TRUN COMPLETE\n", 14, 0 );
-			} else if (strncmp(RecvBuf, "GMON ", 5) == 0) {
-				char GmonStatus[13] = "GMON STARTED\n";
-				for (i = 5; i < RecvBufLen; i++) {
-					if ((char)RecvBuf[i] == '/') {
-						if (strlen(RecvBuf) > 3950) {
-							Function3(RecvBuf);
-						}
-						break;
-					}
-				}				
-				SendResult = send( Client, GmonStatus, sizeof(GmonStatus), 0 );
-			} else if (strncmp(RecvBuf, "GDOG ", 5) == 0) {				
-				strncpy(GdogBuf, RecvBuf, 1024);
-				SendResult = send( Client, "GDOG RUNNING\n", 13, 0 );
-			} else if (strncmp(RecvBuf, "KSTET ", 6) == 0) {
-				char *KstetBuf = malloc(100);
-				strncpy(KstetBuf, RecvBuf, 100);
-				memset(RecvBuf, 0, DEFAULT_BUFLEN);
-				Function2(KstetBuf);
-				SendResult = send( Client, "KSTET SUCCESSFUL\n", 17, 0 );
-			} else if (strncmp(RecvBuf, "GTER ", 5) == 0) {
-				char *GterBuf = malloc(180);
-				memset(GdogBuf, 0, 1024);
-				strncpy(GterBuf, RecvBuf, 180);				
-				memset(RecvBuf, 0, DEFAULT_BUFLEN);
-				Function1(GterBuf);
-				SendResult = send( Client, "GTER ON TRACK\n", 14, 0 );
-			} else if (strncmp(RecvBuf, "HTER ", 5) == 0) {
-				char THBuf[3];
-				memset(THBuf, 0, 3);
-				char *HterBuf = malloc((DEFAULT_BUFLEN+1)/2);
-				memset(HterBuf, 0, (DEFAULT_BUFLEN+1)/2);
-				i = 6;
-				k = 0;
-				while ( (RecvBuf[i]) && (RecvBuf[i+1])) {
-					memcpy(THBuf, (char *)RecvBuf+i, 2);
-					unsigned long j = strtoul((char *)THBuf, NULL, 16);
-					memset((char *)HterBuf + k, (byte)j, 1);
-					i = i + 2;
-					k++;
-				} 
-				Function4(HterBuf);
-				memset(HterBuf, 0, (DEFAULT_BUFLEN+1)/2);
-				SendResult = send( Client, "HTER RUNNING FINE\n", 18, 0 );
-			} else if (strncmp(RecvBuf, "LTER ", 5) == 0) {
-				char *LterBuf = malloc(DEFAULT_BUFLEN);
-				memset(LterBuf, 0, DEFAULT_BUFLEN);
-				i = 0;
-				while(RecvBuf[i]) {
-					if ((byte)RecvBuf[i] > 0x7f) {
-						LterBuf[i] = (byte)RecvBuf[i] - 0x7f;
-					} else {
-						LterBuf[i] = RecvBuf[i];
-					}
-					i++;
-				}
-				for (i = 5; i < DEFAULT_BUFLEN; i++) {
-					if ((char)LterBuf[i] == '.') {					
-						Function3(LterBuf);
-						break;
-					}
-				}
-				memset(LterBuf, 0, DEFAULT_BUFLEN);
-				SendResult = send( Client, "LTER COMPLETE\n", 14, 0 );
-			} else if (strncmp(RecvBuf, "KSTAN ", 6) == 0) {
-				SendResult = send( Client, "KSTAN UNDERWAY\n", 15, 0 );
-			} else if (strncmp(RecvBuf, "EXIT", 4) == 0) {
-				SendResult = send( Client, "GOODBYE\n", 8, 0 );
-				printf("Connection closing...\n");
-				closesocket(Client);
-				return 0;
-			} else {
-				SendResult = send( Client, "UNKNOWN COMMAND\n", 16, 0 );
+				goto out_close;
 			}
-			if (SendResult == SOCKET_ERROR) {
-				printf("Send failed with error: %d\n", WSAGetLastError());
-				closesocket(Client);
-				return 1;
-			}
-		} else if (Result == 0) {
+		} else if (count == 0) {
 			printf("Connection closing...\n");
-			closesocket(Client);
-			return 0;			
+			goto out_close;
 		} else  {
-			printf("Recv failed with error: %d\n", WSAGetLastError());
-			closesocket(Client);
-			return 1;
+			fprintf(stderr, "Recv failed with error (%d): %s\n",
+				errno, strerror(errno));
+			goto out_close;
 		}
+	}
 
-	}	
-#endif
 out_close:
 	close(client_fd);
-out:
 	pthread_exit(NULL);
 }
 
+int handle_command(int client_fd, char *cmdbuf, char *gdogbuf)
+{
+	if (strncmp(cmdbuf, "HELP ", 5) == 0)
+		return handle_not_implemented(client_fd);
+	else if (strncmp(cmdbuf, "HELP", 4) == 0)
+		return handle_help(client_fd);
+	else if (strncmp(cmdbuf, "STATS ", 6) == 0)
+		return handle_stats(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "RTIME ", 6) == 0)
+		return handle_rtime(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "LTIME ", 6) == 0)
+		return handle_ltime(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "SRUN ", 5) == 0)
+		return handle_srun(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "TRUN ", 5) == 0)
+		return handle_trun(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "GMON ", 5) == 0)
+		return handle_gmon(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "GDOG ", 5) == 0)
+		return handle_gdog(client_fd, cmdbuf, gdogbuf);
+	else if (strncmp(cmdbuf, "KSTET ", 6) == 0)
+		return handle_kstet(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "GTER ", 5) == 0)
+		return handle_gter(client_fd, cmdbuf, gdogbuf);
+	else if (strncmp(cmdbuf, "HTER ", 5) == 0)
+		return handle_hter(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "LTER ", 5) == 0)
+		return handle_lter(client_fd, cmdbuf);
+	else if (strncmp(cmdbuf, "KSTAN ", 6) == 0)
+		return handle_kstan(client_fd);
+	else if (strncmp(cmdbuf, "EXIT", 4) == 0)
+		return handle_exit(client_fd);
+	else
+		return handle_unknown(client_fd);
+}
+
+int handle_not_implemented(int client_fd)
+{
+	return send(client_fd, NOT_IMPLEMENTED, sizeof(NOT_IMPLEMENTED), 0);
+}
+
+int handle_help(int client_fd)
+{
+	return send(client_fd, VALID_COMMANDS, sizeof(VALID_COMMANDS), 0);
+}
+
+int handle_stats(int client_fd, char *cmdbuf)
+{
+	char *statbuf = malloc(120);
+
+	memset(statbuf, 0, 120);
+	strncpy(statbuf, cmdbuf, 120);
+
+	return send(client_fd, "STATS VALUE NORMAL\n", 19, 0);
+}
+
+int handle_rtime(int client_fd, char *cmdbuf)
+{
+	char *rtimebuf = malloc(120);
+
+	memset(rtimebuf, 0, 120);
+	strncpy(rtimebuf, cmdbuf, 120);
+
+	return send(client_fd, "RTIME VALUE WITHIN LIMITS\n", 26, 0);
+}
+
+int handle_ltime(int client_fd, char *cmdbuf)
+{
+	char *ltimebuf = malloc(120);
+
+	memset(ltimebuf, 0, 120);
+	strncpy(ltimebuf, cmdbuf, 120);
+
+	return send(client_fd, "LTIME VALUE HIGH, BUT OK\n", 25, 0);
+}
+
+int handle_srun(int client_fd, char *cmdbuf)
+{
+	char *srunbuf = malloc(120);
+
+	memset(srunbuf, 0, 120);
+	strncpy(srunbuf, cmdbuf, 120);
+
+	return send(client_fd, "SRUN COMPLETE\n", 14, 0);
+}
+
+int handle_trun(int client_fd, char *cmdbuf)
+{
+	int i;
+	char *trunbuf = malloc(3000);
+
+	memset(trunbuf, 0, 3000);
+
+	for (i = 5; i < DEFAULT_BUFLEN; i++) {
+		if ((char)cmdbuf[i] == '.') {
+			strncpy(trunbuf, cmdbuf, 3000);
+			function3(trunbuf);
+			break;
+		}
+	}
+
+	memset(trunbuf, 0, 3000);
+
+	return send(client_fd, "TRUN COMPLETE\n", 14, 0);
+}
+
+int handle_gmon(int client_fd, char *cmdbuf)
+{
+	int i;
+	char gmon_status[13] = "GMON STARTED\n";
+
+	for (i = 5; i < DEFAULT_BUFLEN; i++) {
+		if ((char)cmdbuf[i] == '/') {
+			if (strlen(cmdbuf) > 3950)
+				function3(cmdbuf);
+			break;
+		}
+	}
+
+	return send(client_fd, gmon_status, sizeof(gmon_status), 0);
+}
+
+int handle_gdog(int client_fd, char *cmdbuf, char *gdogbuf)
+{
+	strncpy(gdogbuf, cmdbuf, 1024);
+
+	return send(client_fd, "GDOG RUNNING\n", 13, 0);
+}
+
+int handle_kstet(int client_fd, char *cmdbuf)
+{
+	char *kstetbuf = malloc(100);
+
+	strncpy(kstetbuf, cmdbuf, 100);
+	memset(cmdbuf, 0, DEFAULT_BUFLEN);
+	function2(kstetbuf);
+
+	return send(client_fd, "KSTET SUCCESSFUL\n", 17, 0);
+}
+
+int handle_gter(int client_fd, char *cmdbuf, char *gdogbuf)
+{
+	char *gterbuf = malloc(180);
+
+	memset(gdogbuf, 0, 1024);
+	strncpy(gterbuf, cmdbuf, 180);
+	memset(cmdbuf, 0, DEFAULT_BUFLEN);
+	function1(gterbuf);
+
+	return send(client_fd, "GTER ON TRACK\n", 14, 0);
+}
+
+int handle_hter(int client_fd, char *cmdbuf)
+{
+	char thbuf[3];
+
+	memset(thbuf, 0, 3);
+	char *hterbuf = malloc((DEFAULT_BUFLEN + 1) / 2);
+
+	memset(hterbuf, 0, (DEFAULT_BUFLEN + 1) / 2);
+	int i = 6;
+	int k = 0;
+
+	// TODO: Check byte replacement. Look original version.
+
+	while ((cmdbuf[i]) && (cmdbuf[i+1])) {
+		memcpy(thbuf, (char *)cmdbuf+i, 2);
+		unsigned long j = strtoul((char *)thbuf, NULL, 16);
+
+		memset((char *)hterbuf + k, j, 1);
+		i = i + 2;
+		k++;
+	}
+
+	function4(hterbuf);
+	memset(hterbuf, 0, (DEFAULT_BUFLEN + 1) / 2);
+
+	return send(client_fd, "HTER RUNNING FINE\n", 18, 0);
+}
+
+int handle_lter(int client_fd, char *cmdbuf)
+{
+	int i = 0;
+	char *lterbuf = malloc(DEFAULT_BUFLEN);
+
+	memset(lterbuf, 0, DEFAULT_BUFLEN);
+
+	// TODO: byte has been replaced with unsigned char
+	// Need to check if this is right
+
+	while (cmdbuf[i]) {
+		if ((unsigned char)cmdbuf[i] > 0x7f)
+			lterbuf[i] = (unsigned char)cmdbuf[i] - 0x7f;
+		else
+			lterbuf[i] = cmdbuf[i];
+		i++;
+	}
+
+	for (i = 5; i < DEFAULT_BUFLEN; i++) {
+		if ((char)lterbuf[i] == '.') {
+			function3(lterbuf);
+			break;
+		}
+	}
+
+	memset(lterbuf, 0, DEFAULT_BUFLEN);
+
+	return send(client_fd, "LTER COMPLETE\n", 14, 0);
+}
+
+int handle_kstan(int client_fd)
+{
+	return send(client_fd, "KSTAN UNDERWAY\n", 15, 0);
+}
+
+int handle_exit(int client_fd)
+{
+	printf("Connection closing...\n");
+	send(client_fd, "GOODBYE\n", 8, 0);
+
+	return -1;
+}
+
+int handle_unknown(int client_fd)
+{
+	return send(client_fd, "UNKNOWN COMMAND\n", 16, 0);
+}
+
+void function1(char *input)
+{
+	char buffer[140];
+
+	strcpy(buffer, input);
+}
+
+void function2(char *input)
+{
+	char buffer[60];
+
+	strcpy(buffer, input);
+}
+
+void function3(char *input)
+{
+	char buffer[2000];
+
+	strcpy(buffer, input);
+}
+
+void function4(char *input)
+{
+	char buffer[1000];
+
+	strcpy(buffer, input);
+}
